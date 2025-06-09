@@ -126,6 +126,7 @@ class SectionParser:
                         result.append(float(value))
             else:  # section may be incomplete
                 result.append(None)
+                #pass
         return result
 
     def __iter__(self):
@@ -288,7 +289,7 @@ def file_validation(outfile):
 
 
 @_init_attrs_dict
-def extract(outfile, T):
+def extract(outfile, T, reduced=True, raise_error=True):
     """Return reduced potentials `u_nk` and gradients `dH/dl` from AMBER outputfile.
 
     Parameters
@@ -298,6 +299,13 @@ def extract(outfile, T):
     T : float
         Temperature in Kelvin at which the simulations were performed;
         needed to generated the reduced potential (in units of kT)
+    reduced : bool, optional
+        If `True` (default), substract the reference energy from the MBAR energies to
+        return the reduced potential `u_nk`. If `False`, returns the raw MBAR energies.
+    raise_error : bool, optional
+        If `True` (default), raises a :exc:`ValueError` if the file is not valid or
+        does not contain the expected data. If `False`, try to parse the file and return
+        the available data, but do not raise an error.
 
     Returns
     -------
@@ -357,21 +365,33 @@ def extract(outfile, T):
                     msg = "Something strange parsing the following MBAR section."
                     msg += "\nMaybe the mbar_lambda values are incorrect?"
                     logger.error("{}\n{}", msg, mbar)
-                    raise ValueError(msg)
+                    if raise_error:
+                        raise ValueError(msg)
+                    else:
+                        logger.warning(
+                            "Skipping MBAR section in file {} due to parsing error", outfile
+                        )
+                        continue
 
                 reference_energy = mbar[file_datum.mbar_lambda_idx]
                 for lmbda, energy in enumerate(mbar):
                     if energy > 0.0:
                         high_E_cnt += 1
 
-                    file_datum.mbar_energies[lmbda].append(
-                        beta * (energy - reference_energy)
-                    )
+                    if not reduced:
+                        # Store the raw MBAR energies in kT
+                        file_datum.mbar_energies[lmbda].append(
+                            beta * energy
+                        )
+                    else:
+                        file_datum.mbar_energies[lmbda].append(
+                            beta * (energy - reference_energy)
+                        )
             elif line == "   5.  TIMINGS\n":
                 finished = True
 
         if high_E_cnt:
-            logger.warning(
+            logger.debug(
                 "{} MBAR energ{} > 0.0 kcal/mol",
                 high_E_cnt,
                 "ies are" if high_E_cnt > 1 else "y is",
@@ -434,7 +454,7 @@ def extract_dHdl(outfile, T):
     return extracted["dHdl"]
 
 
-def extract_u_nk(outfile, T):
+def extract_u_nk(outfile, T, reduced=True, raise_error=True):
     """Return reduced potentials `u_nk` from AMBER outputfile.
 
     Parameters
@@ -444,6 +464,13 @@ def extract_u_nk(outfile, T):
     T : float
         Temperature in Kelvin at which the simulations were performed;
         needed to generated the reduced potential (in units of kT)
+    reduced : bool, optional
+        If `True` (default), substract the reference energy from the MBAR energies to
+        return the reduced potential `u_nk`.
+    raise_error : bool, optional
+        If `True` (default), raises a :exc:`ValueError` if the file is not valid or
+        does not contain the expected data. If `False`, try to parse the file and return
+        the available data, but do not raise an error.
 
     Returns
     -------
@@ -456,7 +483,7 @@ def extract_u_nk(outfile, T):
         the constants used by the corresponding MD engine.
 
     """
-    extracted = extract(outfile, T)
+    extracted = extract(outfile, T, reduced=reduced, raise_error=raise_error)
     return extracted["u_nk"]
 
 
